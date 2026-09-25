@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: ciroot
+          MYSQL_DATABASE: toflow
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -proot -hciroot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DSN: "root:ciroot@tcp(127.0.0.1:3306)/toflow?parseTime=true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Load shop schema
+        run: |
+          until mysql -h 127.0.0.1 -uroot -pciroot toflow < deploy/schema.sql; do
+            echo "waiting for mysql..."; sleep 3
+          done
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        run: go build ./...

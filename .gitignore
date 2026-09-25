@@ -1,0 +1,5 @@
+/shop-admin-bot
+/bot
+.env
+*.out
+*.test
