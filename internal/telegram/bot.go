@@ -58,8 +58,11 @@ func New(token string, store Store, adminIDs []int64, log *slog.Logger) (*Bot, e
 	b.Handle("/start", bot.onMenu)
 	b.Handle("/menu", bot.onMenu)
 	b.Handle("/id", bot.onID)
-	// A single callback router: data is "menu:<view>" or "orders:<period>".
-	b.Handle(tg.OnCallback, bot.onCallback)
+	// Callback handlers are registered per button unique ("\f<unique>"):
+	// only with a specific registration telebot parses the wire data
+	// ("\f<unique>|<payload>") into Callback.Unique and Callback.Data.
+	b.Handle("\f"+cbMenu, bot.onMenuCallback)
+	b.Handle("\f"+cbOrders, bot.onOrdersCallback)
 	return bot, nil
 }
 
@@ -82,22 +85,20 @@ func (b *Bot) onMenu(c tg.Context) error {
 	return c.Send(mainMenuText(), mainMenuMarkup())
 }
 
-// onCallback routes button presses. telebot strips the "\f<unique>"
-// prefix, so the fired button is identified via c.Callback().Unique
-// and its payload arrives as c.Callback().Data.
-func (b *Bot) onCallback(c tg.Context) error {
+// onMenuCallback handles the main-menu buttons; the payload is a view name.
+func (b *Bot) onMenuCallback(c tg.Context) error {
 	if !b.allowed(c.Sender().ID) {
 		return c.Respond(&tg.CallbackResponse{Text: "⛔ Нет доступа"})
 	}
+	return b.showView(c, c.Data())
+}
 
-	switch cb := c.Callback(); cb.Unique {
-	case cbMenu:
-		return b.showView(c, cb.Data)
-	case cbOrders:
-		return b.showOrders(c, storage.Period(cb.Data))
-	default:
-		return c.Respond(&tg.CallbackResponse{Text: "Неизвестная кнопка"})
+// onOrdersCallback handles the period switcher; the payload is a period.
+func (b *Bot) onOrdersCallback(c tg.Context) error {
+	if !b.allowed(c.Sender().ID) {
+		return c.Respond(&tg.CallbackResponse{Text: "⛔ Нет доступа"})
 	}
+	return b.showOrders(c, storage.Period(c.Data()))
 }
 
 func (b *Bot) showView(c tg.Context, view string) error {
