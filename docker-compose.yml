@@ -4,9 +4,14 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Внутри контейнера до БД на хосте идём через host.docker.internal
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-root:devroot@tcp(host.docker.internal:3307)/toflow?parseTime=true}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # База в общем docker-сети botnet (docker network connect botnet toflow-db).
+      # Для БД на другом хосте переопредели в .env переменную DATABASE_URL_DOCKER.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-root:devroot@tcp(toflow-db:3306)/toflow?parseTime=true}
+    networks:
+      - botnet
     ports:
       - "${HTTP_PORT:-8081}:8081"
+
+networks:
+  botnet:
+    external: true

@@ -41,6 +41,8 @@ cp .env.example .env
 # 1) создай бота у @BotFather и впиши токен в BOT_TOKEN
 # 2) запусти бота, отправь ему /id, впиши chat ID в ADMIN_CHAT_IDS
 # 3) впиши DSN своей базы в DATABASE_URL
+# Важно: после правки .env нужен up -d, а не restart —
+# restart не перечитывает переменные окружения
 docker compose up -d --build
 ```
 
