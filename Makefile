@@ -22,9 +22,9 @@ vet:
 tidy:
 	go mod tidy
 
-## up: поднять бота в Docker (БД — вне контейнера, см. .env)
+## up: поднять бота локально в Docker (база toflow-db в сети botnet)
 up:
-	docker compose up -d --build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 ## down: остановить контейнер
 down:

@@ -1,0 +1,12 @@
+# Локальная разработка: база — контейнер toflow-db в сети botnet.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  bot:
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-root:devroot@tcp(toflow-db:3306)/toflow?parseTime=true}
+    networks:
+      - botnet
+
+networks:
+  botnet:
+    external: true

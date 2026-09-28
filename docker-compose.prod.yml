@@ -1,0 +1,9 @@
+# Продакшен (сервер магазина): база MySQL на самом хосте, доступ из
+# контейнера через host-gateway. Состояние пушей — в примонтированном ./data.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  bot:
+    volumes:
+      - ./data:/srv/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
