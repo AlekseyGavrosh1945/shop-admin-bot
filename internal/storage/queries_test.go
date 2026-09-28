@@ -70,6 +70,56 @@ func seedFixtures(t *testing.T, db *DB) {
 		t.Fatalf("seed customers: %v", err)
 	}
 
+	// Chat with one unread customer message.
+	chatRes, err := db.db.ExecContext(ctx, `
+		INSERT INTO chat (uid, time, status, username, email, cause, orderId)
+		VALUES (1, UNIX_TIMESTAMP(), 1, ?, 'fixture@example.com', 5, 'BTFIX-ORDER')
+	`, fixCustomer)
+	if err != nil {
+		t.Fatalf("seed chat: %v", err)
+	}
+	chatID, _ := chatRes.LastInsertId()
+
+	if _, err := db.db.ExecContext(ctx, `
+		INSERT INTO message (type, value, uid, support, `+"`read`"+`, message, time)
+		VALUES ('100', ?, 0, 0, 0, '__bot_fixture__ question', UNIX_TIMESTAMP())
+	`, chatID); err != nil {
+		t.Fatalf("seed chat message: %v", err)
+	}
+
+	// Ticket in "open" state.
+	if _, err := db.db.ExecContext(ctx, `
+		INSERT INTO ticket (uid, orderId, cause, department, status, view, time, description)
+		VALUES (1, 'BTFIX-ORDER', 4, 1, 2, '0', UNIX_TIMESTAMP(), '__bot_fixture__ ticket')
+	`); err != nil {
+		t.Fatalf("seed ticket: %v", err)
+	}
+
+	// Review on the fixture product (created above with article BTFIX1).
+	if _, err := db.db.ExecContext(ctx, `
+		INSERT INTO catalog_product_reviews (productId, author, email, rating, statusWebshop, text)
+		SELECT productId, ?, 'review@example.com', 4, 0, '__bot_fixture__ review'
+		FROM catalog_product WHERE article = 'BTFIX1'
+	`, fixCustomer); err != nil {
+		t.Fatalf("seed review: %v", err)
+	}
+
+	// RMA request.
+	if _, err := db.db.ExecContext(ctx, `
+		INSERT INTO rma (uid, orderId, description, isSubscribe, replacement, status, time)
+		VALUES (1, 'BTFIX-ORDER', '__bot_fixture__ rma', 0, 0, 1, UNIX_TIMESTAMP())
+	`); err != nil {
+		t.Fatalf("seed rma: %v", err)
+	}
+
+	// Registration request.
+	if _, err := db.db.ExecContext(ctx, `
+		INSERT INTO registration_users_by_mail (id_sender, from_mail, key_url, status, time)
+		VALUES (0, 'fixture@example.com', 'fixkey', 0, UNIX_TIMESTAMP())
+	`); err != nil {
+		t.Fatalf("seed registration: %v", err)
+	}
+
 	t.Cleanup(func() { cleanupFixtures(t, db) })
 }
 
@@ -81,6 +131,12 @@ func cleanupFixtures(t *testing.T, db *DB) {
 		arg   string
 	}{
 		{`DELETE FROM cart_order_payment WHERE paymentId LIKE ?`, fixPaymentID + "%"},
+		{`DELETE FROM message WHERE message LIKE ?`, fixPaymentID + "%"},
+		{`DELETE FROM chat WHERE username = ?`, fixCustomer},
+		{`DELETE FROM ticket WHERE description LIKE ?`, fixPaymentID + "%"},
+		{`DELETE FROM catalog_product_reviews WHERE author = ?`, fixCustomer},
+		{`DELETE FROM rma WHERE description LIKE ?`, fixPaymentID + "%"},
+		{`DELETE FROM registration_users_by_mail WHERE from_mail = ?`, "fixture@example.com"},
 		{`DELETE FROM catalog_product_prices WHERE productId IN
 			(SELECT productId FROM catalog_product WHERE article LIKE ?)`, fixArticle + "%"},
 		{`DELETE FROM catalog_product WHERE article LIKE ?`, fixArticle + "%"},
@@ -269,5 +325,187 @@ func TestRecentOrders(t *testing.T) {
 		if !got[id] {
 			t.Errorf("fixture order %d is not among the latest: %v", id, got)
 		}
+	}
+}
+
+func TestEventSources(t *testing.T) {
+	db := newTestDB(t)
+	seedFixtures(t, db)
+	ctx := context.Background()
+
+	t.Run("ChatMessages", func(t *testing.T) {
+		// A production cursor sits just behind the newest row, so the
+		// window after MAX(id)-1 must contain exactly the fixture.
+		maxID, err := db.ChatMessagesMaxID(ctx)
+		if err != nil {
+			t.Fatalf("ChatMessagesMaxID: %v", err)
+		}
+		msgs, err := db.ChatMessagesSince(ctx, maxID-1, 20)
+		if err != nil {
+			t.Fatalf("ChatMessagesSince: %v", err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("got %d messages after maxID-1, want exactly the fixture", len(msgs))
+		}
+		m := msgs[0]
+		if m.Text != "__bot_fixture__ question" {
+			t.Errorf("message = %+v, want the fixture", m)
+		}
+		if m.Username != fixCustomer || m.Cause != 5 || m.ChatID == 0 {
+			t.Errorf("fixture chat message = %+v", m)
+		}
+		if m.ID != maxID {
+			t.Errorf("message id = %d, want maxID %d", m.ID, maxID)
+		}
+	})
+
+	t.Run("Tickets", func(t *testing.T) {
+		maxID, err := db.TicketsMaxID(ctx)
+		if err != nil {
+			t.Fatalf("TicketsMaxID: %v", err)
+		}
+		tickets, err := db.TicketsSince(ctx, maxID-1, 20)
+		if err != nil {
+			t.Fatalf("TicketsSince: %v", err)
+		}
+		var found bool
+		for _, tk := range tickets {
+			if tk.Description == "__bot_fixture__ ticket" {
+				found = true
+				if tk.Status != 2 || tk.OrderID != "BTFIX-ORDER" {
+					t.Errorf("fixture ticket = %+v", tk)
+				}
+			}
+		}
+		if !found {
+			t.Error("fixture ticket not found")
+		}
+	})
+
+	t.Run("Reviews", func(t *testing.T) {
+		reviews, err := db.ReviewsSince(ctx, 0, 20)
+		if err != nil {
+			t.Fatalf("ReviewsSince: %v", err)
+		}
+		var found bool
+		for _, r := range reviews {
+			if r.Text == "__bot_fixture__ review" {
+				found = true
+				if r.Author != fixCustomer || r.Rating != 4 || r.Published {
+					t.Errorf("fixture review = %+v", r)
+				}
+			}
+		}
+		if !found {
+			t.Error("fixture review not found")
+		}
+	})
+
+	t.Run("Rma", func(t *testing.T) {
+		maxID, err := db.RmaMaxID(ctx)
+		if err != nil {
+			t.Fatalf("RmaMaxID: %v", err)
+		}
+		rmas, err := db.RmaSince(ctx, maxID-1, 20)
+		if err != nil {
+			t.Fatalf("RmaSince: %v", err)
+		}
+		var found bool
+		for _, r := range rmas {
+			if r.Description == "__bot_fixture__ rma" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("fixture rma not found")
+		}
+		if _, err := db.RmaMaxID(ctx); err != nil {
+			t.Errorf("RmaMaxID: %v", err)
+		}
+	})
+
+	t.Run("Registrations", func(t *testing.T) {
+		regs, err := db.RegistrationsSince(ctx, 0, 20)
+		if err != nil {
+			t.Fatalf("RegistrationsSince: %v", err)
+		}
+		var found bool
+		for _, r := range regs {
+			if r.Email == "fixture@example.com" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("fixture registration not found")
+		}
+		if _, err := db.RegistrationsMaxID(ctx); err != nil {
+			t.Errorf("RegistrationsMaxID: %v", err)
+		}
+	})
+
+	t.Run("OrdersSince", func(t *testing.T) {
+		orders, err := db.OrdersSince(ctx, 0, 20)
+		if err != nil {
+			t.Fatalf("OrdersSince: %v", err)
+		}
+		if len(orders) == 0 {
+			t.Fatal("OrdersSince(0) returned no rows")
+		}
+		for i := 1; i < len(orders); i++ {
+			if orders[i].ID <= orders[i-1].ID {
+				t.Error("OrdersSince is not sorted by id asc")
+			}
+		}
+	})
+}
+
+func TestOpenChatsAndTickets(t *testing.T) {
+	db := newTestDB(t)
+	seedFixtures(t, db)
+	ctx := context.Background()
+
+	chats, err := db.OpenChats(ctx, 10)
+	if err != nil {
+		t.Fatalf("OpenChats: %v", err)
+	}
+	var chatFound bool
+	for _, c := range chats {
+		if c.Username == fixCustomer {
+			chatFound = true
+			if c.Cause != 5 || c.OrderID != "BTFIX-ORDER" {
+				t.Errorf("fixture chat = %+v", c)
+			}
+			if c.Unread != 1 {
+				t.Errorf("fixture chat unread = %d, want 1", c.Unread)
+			}
+		}
+	}
+	if !chatFound {
+		t.Error("fixture chat not found among open chats")
+	}
+
+	open, _, err := db.TicketsCounts(ctx)
+	if err != nil {
+		t.Fatalf("TicketsCounts: %v", err)
+	}
+	if open < 1 {
+		t.Errorf("open tickets = %d, want >= 1", open)
+	}
+
+	tickets, err := db.OpenTickets(ctx, 10)
+	if err != nil {
+		t.Fatalf("OpenTickets: %v", err)
+	}
+	var ticketFound bool
+	for _, tk := range tickets {
+		if tk.Description == "__bot_fixture__ ticket" {
+			ticketFound = true
+			if tk.Status != 2 {
+				t.Errorf("fixture ticket status = %d, want 2", tk.Status)
+			}
+		}
+	}
+	if !ticketFound {
+		t.Error("fixture ticket not found among open tickets")
 	}
 }

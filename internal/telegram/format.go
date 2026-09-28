@@ -1,50 +1,17 @@
+// Package telegram renders bot views. This file aliases the shared
+// formatting helpers for concise local use.
 package telegram
 
 import (
-	"math"
-	"strconv"
-	"strings"
+	ui "github.com/AlekseyGavrosh1945/shop-admin-bot/internal/ui"
 )
 
-// fmtEUR renders an amount as "12 345 €" (kopecks are rounded).
-func fmtEUR(v float64) string { return fmtInt(int64(math.Round(v))) + " €" }
+func fmtEUR(v float64) string { return ui.FmtEUR(v) }
 
-// fmtInt renders an integer with space thousand separators.
-func fmtInt(v int64) string {
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	digits := strconv.FormatInt(v, 10)
-	var b strings.Builder
-	for i, d := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteRune(d)
-	}
-	if neg {
-		return "-" + b.String()
-	}
-	return b.String()
-}
+func fmtInt(v int64) string { return ui.FmtInt(v) }
 
-// fmtQty renders stock; a missing value renders as "—".
-func fmtQty(q *int64) string {
-	if q == nil {
-		return "—"
-	}
-	return fmtInt(*q)
-}
+func fmtQty(q *int64) string { return ui.FmtQty(q) }
 
-// fmtPrice renders a nullable price; a missing value renders as "—".
-func fmtPrice(p *float64) string {
-	if p == nil {
-		return "—"
-	}
-	return fmtEUR(*p)
-}
+func fmtPrice(p *float64) string { return ui.FmtPrice(p) }
 
-var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-
-func esc(s string) string { return htmlEscaper.Replace(s) }
+func esc(s string) string { return ui.Esc(s) }

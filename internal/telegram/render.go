@@ -21,12 +21,15 @@ const (
 	viewProducts  = "products"
 	viewCustomers = "customers"
 	viewRecent    = "recent"
+	viewChats     = "chats"
+	viewTickets   = "tickets"
 )
 
 func mainMenuMarkup() *tg.ReplyMarkup {
 	m := &tg.ReplyMarkup{}
 	m.Inline(
 		m.Row(m.Data("📊 Заказы", cbMenu, viewOrders), m.Data("🛒 Товары", cbMenu, viewProducts)),
+		m.Row(m.Data("💬 Чаты", cbMenu, viewChats), m.Data("🎫 Тикеты", cbMenu, viewTickets)),
 		m.Row(m.Data("👥 Клиенты", cbMenu, viewCustomers), m.Data("🧾 Последние заказы", cbMenu, viewRecent)),
 	)
 	return m
@@ -138,6 +141,90 @@ func renderRecent(orders []storage.RecentOrder) (string, *tg.ReplyMarkup) {
 			o.OrderID, statusEmoji(o.Status), fmtEUR(o.Price), esc(o.Method), esc(o.Status), esc(o.WhenText))
 	}
 	return b.String(), m
+}
+
+// renderChats builds the open chats view.
+func renderChats(chats []storage.ChatRow) (string, *tg.ReplyMarkup) {
+	m := &tg.ReplyMarkup{}
+	m.Inline(backRow(m))
+
+	var b strings.Builder
+	if len(chats) == 0 {
+		b.WriteString("💬 <b>Чаты</b>\n\nОткрытых чатов нет.")
+		return b.String(), m
+	}
+
+	unreadTotal := int64(0)
+	for _, c := range chats {
+		unreadTotal += c.Unread
+	}
+	fmt.Fprintf(&b, "💬 <b>Открытые чаты</b>: %d, непрочитанных сообщений: <b>%d</b>\n\n", len(chats), unreadTotal)
+	for _, c := range chats {
+		fmt.Fprintf(&b, "<code>#%d</code> %s (%s)", c.ID, esc(c.Username), esc(c.Email))
+		if c.Cause != 0 {
+			fmt.Fprintf(&b, " — %s", esc(causeName(c.Cause)))
+		}
+		if c.OrderID != "" {
+			fmt.Fprintf(&b, " · заказ <code>%s</code>", esc(c.OrderID))
+		}
+		if c.Unread > 0 {
+			fmt.Fprintf(&b, " · 🔴 %s", fmtInt(c.Unread))
+		}
+		b.WriteString("\n")
+	}
+	return b.String(), m
+}
+
+// renderTickets builds the tickets view.
+func renderTickets(open, waiting int64, tickets []storage.TicketRow) (string, *tg.ReplyMarkup) {
+	m := &tg.ReplyMarkup{}
+	m.Inline(backRow(m))
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "🎫 <b>Тикеты</b> — открытых: <b>%s</b>, в ожидании: <b>%s</b>\n", fmtInt(open), fmtInt(waiting))
+	if len(tickets) == 0 {
+		b.WriteString("\nАктивных тикетов нет.")
+		return b.String(), m
+	}
+
+	b.WriteString("\n")
+	for _, t := range tickets {
+		fmt.Fprintf(&b, "<code>#%d</code> заказ <code>%s</code> — %s", t.ID, esc(t.OrderID), esc(ticketStatusName(t.Status)))
+		if d := strings.TrimSpace(t.Description); d != "" {
+			fmt.Fprintf(&b, "\n%s", esc(d))
+		}
+		b.WriteString("\n\n")
+	}
+	return b.String(), m
+}
+
+func causeName(cause int64) string {
+	names := map[int64]string{
+		1: "вопрос по товару",
+		2: "запрос цены",
+		3: "вопрос по счёту",
+		4: "технический вопрос",
+		5: "вопрос о наличии",
+	}
+	if n, ok := names[cause]; ok {
+		return n
+	}
+	return fmt.Sprintf("вопрос #%d", cause)
+}
+
+func ticketStatusName(status int64) string {
+	switch status {
+	case 1:
+		return "отвечен"
+	case 2:
+		return "открыт"
+	case 3:
+		return "в ожидании"
+	case 4:
+		return "закрыт"
+	default:
+		return fmt.Sprintf("статус %d", status)
+	}
 }
 
 func statusEmoji(status string) string {

@@ -22,6 +22,9 @@ type Store interface {
 	ProductsSummary(ctx context.Context) (*storage.ProductsSummary, error)
 	CustomersSummary(ctx context.Context) (*storage.CustomersSummary, error)
 	RecentOrders(ctx context.Context, limit int) ([]storage.RecentOrder, error)
+	OpenChats(ctx context.Context, limit int) ([]storage.ChatRow, error)
+	OpenTickets(ctx context.Context, limit int) ([]storage.TicketRow, error)
+	TicketsCounts(ctx context.Context) (open, waiting int64, err error)
 }
 
 // Bot wraps the telebot client with an admin whitelist.
@@ -131,6 +134,20 @@ func (b *Bot) showView(c tg.Context, view string) error {
 			return c.Respond(&tg.CallbackResponse{Text: "Ошибка базы данных, попробуй позже"})
 		}
 		return b.edit(c, text, markup)
+	case viewChats:
+		text, markup, err := b.chatsView(ctx)
+		if err != nil {
+			b.log.Error("build chats view", "err", err)
+			return c.Respond(&tg.CallbackResponse{Text: "Ошибка базы данных, попробуй позже"})
+		}
+		return b.edit(c, text, markup)
+	case viewTickets:
+		text, markup, err := b.ticketsView(ctx)
+		if err != nil {
+			b.log.Error("build tickets view", "err", err)
+			return c.Respond(&tg.CallbackResponse{Text: "Ошибка базы данных, попробуй позже"})
+		}
+		return b.edit(c, text, markup)
 	default:
 		return b.edit(c, mainMenuText(), mainMenuMarkup())
 	}
@@ -201,6 +218,39 @@ func (b *Bot) recentView(ctx context.Context) (string, *tg.ReplyMarkup, error) {
 	}
 	text, markup := renderRecent(orders)
 	return text, markup, nil
+}
+
+func (b *Bot) chatsView(ctx context.Context) (string, *tg.ReplyMarkup, error) {
+	chats, err := b.store.OpenChats(ctx, 10)
+	if err != nil {
+		return "", nil, err
+	}
+	text, markup := renderChats(chats)
+	return text, markup, nil
+}
+
+func (b *Bot) ticketsView(ctx context.Context) (string, *tg.ReplyMarkup, error) {
+	open, waiting, err := b.store.TicketsCounts(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	tickets, err := b.store.OpenTickets(ctx, 10)
+	if err != nil {
+		return "", nil, err
+	}
+	text, markup := renderTickets(open, waiting, tickets)
+	return text, markup, nil
+}
+
+// NotifyAll sends text to every whitelisted admin chat. Errors for
+// individual chats are logged, not returned: one failed chat must not
+// block the others.
+func (b *Bot) NotifyAll(ctx context.Context, text string) {
+	for chatID := range b.admins {
+		if _, err := b.bot.Send(tg.ChatID(chatID), text, tg.ModeHTML); err != nil {
+			b.log.Warn("notify admin", "chat_id", chatID, "err", err)
+		}
+	}
 }
 
 // allowed reports whether the chat is in the admin whitelist.

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/config"
+	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/poller"
 	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/server"
+	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/sources"
 	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/storage"
 	"github.com/AlekseyGavrosh1945/shop-admin-bot/internal/telegram"
 )
@@ -66,6 +68,17 @@ func run() error {
 
 	go bot.Start()
 	log.Info("telegram bot started", "admins", len(cfg.AdminChatIDs))
+
+	// Push notifications: poll event sources, deliver new rows to admins.
+	p := poller.New(
+		sources.All(db),
+		func(ctx context.Context, source string, events []poller.Event) error {
+			bot.NotifyAll(ctx, sources.BatchText(source, events))
+			return nil
+		},
+		cfg.PollInterval, cfg.StateFile, log,
+	)
+	go p.Run(ctx)
 
 	<-ctx.Done()
 	log.Info("shutting down")

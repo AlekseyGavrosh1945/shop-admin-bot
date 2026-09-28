@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds the runtime parameters of the bot.
@@ -18,6 +19,10 @@ type Config struct {
 	DatabaseURL string
 	// HTTPAddr is the address of the HTTP server serving /healthz.
 	HTTPAddr string
+	// PollInterval is how often event sources are checked for pushes.
+	PollInterval time.Duration
+	// StateFile keeps poller cursors between restarts.
+	StateFile string
 }
 
 // Load reads the configuration from the environment, applying defaults
@@ -27,6 +32,12 @@ func Load() (Config, error) {
 		BotToken:    os.Getenv("BOT_TOKEN"),
 		DatabaseURL: getenv("DATABASE_URL", "root:devroot@tcp(127.0.0.1:3307)/toflow?parseTime=true"),
 		HTTPAddr:    getenv("HTTP_ADDR", ":8081"),
+		StateFile:   getenv("STATE_FILE", "bot_state.json"),
+	}
+
+	var err error
+	if cfg.PollInterval, err = getDuration("POLL_INTERVAL", 30*time.Second); err != nil {
+		return cfg, err
 	}
 
 	ids, err := chatIDs(os.Getenv("ADMIN_CHAT_IDS"))
@@ -64,4 +75,16 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func getDuration(key string, def time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", key, err)
+	}
+	return v, nil
 }
